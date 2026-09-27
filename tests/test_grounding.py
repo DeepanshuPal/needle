@@ -387,3 +387,26 @@ def test_run_still_refuses_a_non_numeric_engine_flag(stub):
     response = agent.run("make it 21 and cool the room")
 
     assert response["results"] == [{"error": "ungrounded mode"}]
+
+
+def test_a_time_after_a_day_and_month_is_not_read_as_a_year(stub):
+    import needle
+
+    stub.envelopes = [_call("2026-06-05")]
+    agent = needle.Needle(tools=[Invoice])
+    response = agent.complete("Send an invoice to Acme due on 5 June 19:30")
+
+    assert "validation" not in response
+    assert needle._source_years("due on 5 June 19:30") == set()
+    assert needle._source_years("due on June 5 7 pm") == set()
+    assert needle._source_years("due on June 5, 2031 19:30") == {2031}
+    assert needle._source_years("due on 5 June 2031") == {2031}
+
+
+def test_extract_accepts_a_date_followed_by_a_time(stub):
+    import needle
+
+    stub.envelopes = [_call("2026-03-03")]
+    invoice = needle.extract("Invoice from Acme Corp due March 3 14:00", Invoice)
+
+    assert invoice.due_date == datetime.date(2026, 3, 3)

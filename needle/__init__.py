@@ -428,8 +428,11 @@ def _source_years(text):
               r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
               r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
     patterns = [
-        rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{months}[\s,]+(\d{{1,4}})(?![0-9A-Za-z])",
-        rf"\b{months}\s+\d{{1,2}}(?:st|nd|rd|th)?\s*,?\s+(\d{{1,4}})(?![0-9A-Za-z])",
+        # The number after a day and month is its year, unless it is the hour of
+        # a time ("5 June 19:30", "June 5 7 pm"): no ISO argument can carry
+        # that as a year, so licensing it would reject every date.
+        rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+{months}[\s,]+(\d{{1,4}})(?![0-9A-Za-z]|:\d|\s*[ap]\.?m\b)",
+        rf"\b{months}\s+\d{{1,2}}(?:st|nd|rd|th)?\s*,?\s+(\d{{1,4}})(?![0-9A-Za-z]|:\d|\s*[ap]\.?m\b)",
         rf"\b{months}[\s,]+(\d{{3,4}})(?![0-9A-Za-z])",
         r"\byear\s+(\d{1,4})(?![0-9A-Za-z])",
         # Year-first numeric dates only (2024-03-15, 2024/03/15).  A day- or
