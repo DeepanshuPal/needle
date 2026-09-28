@@ -22,6 +22,11 @@ CHECKPOINT_PREFIX = "checkpoints"
 # Backwards-compatible aliases for callers that explicitly fetch Needle 2.
 HF_REPO = ENGINE_REPOS[2]
 
+WHEEL_TAGS = ("macosx_11_0_arm64", "macosx_11_0_x86_64",
+              "manylinux2014_aarch64", "manylinux2014_x86_64",
+              "musllinux_1_2_aarch64", "musllinux_1_2_x86_64",
+              "win_amd64", "win_arm64")
+
 PLATFORMS = ("macos-arm64", "linux-x86_64", "linux-arm64", "linux-armv7",
              "linux-riscv64", "linux-mipsel", "windows-x86_64", "windows-arm64",
              "android-arm64", "android-armv7", "android-riscv64",
@@ -93,6 +98,30 @@ def other_libc_tag():
     if tag.startswith("musllinux_1_2_"):
         return tag.replace("musllinux_1_2_", "manylinux2014_")
     return None
+
+
+def engine_wheel(version, tag):
+    return "python/cactus_needle-{}-py3-none-{}.whl".format(version, tag)
+
+
+def unpublished_engine_wheels():
+    """Pinned engine wheels that are missing from the Hub, as repo-qualified paths.
+
+    ENGINE_VERSIONS and the wheels it names are published separately, so a pin
+    that lands before its upload leaves every fresh install with nothing to
+    fetch.  The release train calls this before it publishes.
+    """
+    from huggingface_hub import list_repo_files
+
+    missing = []
+    for generation in sorted(ENGINE_VERSIONS):
+        repo = ENGINE_REPOS[generation]
+        present = set(list_repo_files(repo))
+        for tag in WHEEL_TAGS:
+            wheel = engine_wheel(ENGINE_VERSIONS[generation], tag)
+            if wheel not in present:
+                missing.append(repo + "/" + wheel)
+    return missing
 
 
 def engine_repo(generation=2):
@@ -209,10 +238,9 @@ def fetch_library(version=None, dest_dir=None, tag=None, generation=2):
         raise TypeError("dest_dir is required")
     version = version or engine_version(generation)
     tag = tag or _platform_tag()
-    wheel = "cactus_needle-{}-py3-none-{}.whl".format(version, tag)
     repo = engine_repo(generation)
     _register_download(generation)
-    path = hf_hub_download(repo_id=repo, filename="python/" + wheel, repo_type="model")
+    path = hf_hub_download(repo_id=repo, filename=engine_wheel(version, tag), repo_type="model")
     lib = _lib_name_for(tag)
     stem, suffix = os.path.splitext(lib)
     member = f"{stem}{generation}{suffix}" if int(generation) >= 3 else lib

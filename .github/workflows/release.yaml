@@ -91,6 +91,19 @@ jobs:
           next="${{ steps.version.outputs.next }}"
           sed -i "s/^version = \".*\"/version = \"$next\"/" pyproject.toml
           sed -i "s/^__version__ = \".*\"/__version__ = \"$next\"/" needle/__init__.py
+      # The engine wheels live on the Hub and are uploaded separately. Publishing a
+      # pin whose wheels are not there yet makes every fresh install fail at first use.
+      - if: steps.version.outputs.skip != 'true'
+        run: |
+          pip install huggingface_hub
+          python - <<'PY'
+          from needle.agent import fetch
+          missing = fetch.unpublished_engine_wheels()
+          if missing:
+              raise SystemExit("engine wheels missing from the Hub, refusing to publish:\n  "
+                               + "\n  ".join(missing))
+          print("every pinned engine is published")
+          PY
       - if: steps.version.outputs.skip != 'true'
         run: python -m build
       - if: steps.version.outputs.skip != 'true'

@@ -105,6 +105,32 @@ def test_component_platform_is_downloadable():
     assert "wasm-component" in PLATFORMS
 
 
+def test_unpublished_engine_wheels_lists_every_missing_tag(monkeypatch):
+    from needle.agent import fetch
+
+    published = {
+        repo: {fetch.engine_wheel(version, tag) for tag in fetch.WHEEL_TAGS}
+        for repo, version in ((fetch.ENGINE_REPOS[2], fetch.ENGINE_VERSIONS[2]),
+                              (fetch.ENGINE_REPOS[3], fetch.ENGINE_VERSIONS[3]))
+    }
+    monkeypatch.setattr("huggingface_hub.list_repo_files",
+                        lambda repo: sorted(published[repo]) + ["needle3.cact"])
+    assert fetch.unpublished_engine_wheels() == []
+
+    repo3 = fetch.ENGINE_REPOS[3]
+    dropped = fetch.engine_wheel(fetch.ENGINE_VERSIONS[3], "win_arm64")
+    published[repo3].remove(dropped)
+    assert fetch.unpublished_engine_wheels() == [repo3 + "/" + dropped]
+
+
+def test_release_gate_runs_before_the_publish_step():
+    from pathlib import Path
+
+    workflow = Path(__file__).parents[1] / ".github/workflows/release.yaml"
+    text = workflow.read_text()
+    assert text.index("unpublished_engine_wheels") < text.index("pypa/gh-action-pypi-publish")
+
+
 def test_fetch_library_creates_destination(tmp_path, monkeypatch):
     import zipfile
     from needle.agent import fetch
