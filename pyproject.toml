@@ -25,6 +25,8 @@ metal = [
     "jaxlib==0.4.38",
     "jax-metal"
 ]
+whistle = ["numpy", "soxr", "sounddevice"]
+whistle-compare = ["openai-whisper", "moonshine-voice"]
 test = ["pytest", "pydantic"]
 
 [project.scripts]

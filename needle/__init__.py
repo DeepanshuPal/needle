@@ -11,9 +11,10 @@ import warnings
 from .agent.tools import Field, build_schema, pydantic_schema, tool, _is_pydantic_model
 from ._telemetry import track as _track
 from ._worker import FineTuneWorker
+from .whistle import Whistle
 
 __version__ = "3.0.1"
-__all__ = ["Needle", "ExtractionValidationError", "tool", "Field", "extract",
+__all__ = ["Needle", "Whistle", "ExtractionValidationError", "tool", "Field", "extract",
            "__version__"]
 
 
@@ -80,8 +81,8 @@ def _confidence_head_present(path):
 def _library_path(generation=2):
     from .agent import fetch
 
-    generation = int(generation)
-    override = os.environ.get(f"NEEDLE{generation}_LIB_PATH")
+    generation = fetch._engine(generation)
+    override = os.environ.get(fetch.lib_path_env(generation))
     if generation == 2 and not override:
         # NEEDLE_LIB_PATH predates multi-generation dispatch and therefore
         # names the Needle 2 engine.  Never route a v3 archive through it.
@@ -89,9 +90,9 @@ def _library_path(generation=2):
     if override:
         return override
     here = os.path.dirname(os.path.abspath(__file__))
-    lib_name = fetch._lib_name()
+    lib_name = fetch.lib_name(generation)
     stem, suffix = os.path.splitext(lib_name)
-    local_names = [f"{stem}{generation}{suffix}"]
+    local_names = [lib_name if generation in fetch.NAMED_ENGINES else f"{stem}{generation}{suffix}"]
     if generation == 2:
         # Wheels published before the split shipped Needle 2 as libneedle.*.
         local_names.append(lib_name)
@@ -100,9 +101,8 @@ def _library_path(generation=2):
         if os.path.exists(local):
             return local
     version = fetch.engine_version(generation)
-    cache = os.path.join(os.path.expanduser("~"), ".cache", "cactus-needle",
-                         f"v{generation}", version)
-    cached = os.path.join(cache, fetch._lib_name())
+    cache = fetch.cache_dir(generation)
+    cached = os.path.join(cache, lib_name)
     if os.path.exists(cached):
         return cached
     os.makedirs(cache, exist_ok=True)
