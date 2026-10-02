@@ -5,6 +5,7 @@ A foundation model for mobiles, wearables, robots, smart home, automotive and mi
 - **Tool calls**: given the functions your app exposes, Needle picks the right ones and fills every argument from what the user said. Ask for two things and you get two calls in order; ask for something no tool covers and you get an empty list, not a guess.
 - **Structured extraction**: declare a shape, hand over messy text, get typed fields back: an invoice, a booking, a notification, a form. The decode grammar guarantees the output parses, and extraction generalises to classification.
 - **Text embedding**: the same model returns a vector for a sentence, so an app can search, match and route locally.
+- **Speech**: [Whistle](#whistle), our speech-to-text model, shares Needle's container and engine. One build gives Needle audio input: the clip goes in, the tool calls come out.
 
 ![Needle 3 at a glance](assets/model.svg)
 
@@ -42,6 +43,35 @@ print(agent.run("what's it like in Lagos right now?")["results"])
 ```
 
 Every turn returns one JSON object with `function_calls`, the model's `reasoning` and a calibrated `confidence`; an off-topic request returns an empty list rather than a guess. `needle.Needle(tools=[...], generation=2)` keeps running Needle 2 for existing deployments.
+
+## Whistle
+
+![One engine, three ways to load it](assets/whistle.svg)
+
+Whistle is our speech-to-text model, one 16.9 MB file on the CPU: 16 kHz mono audio, up to 30 seconds in one pass, in English, German, French, Spanish, Italian, Dutch and Polish. It shares Needle's `.cact` container, its quantisation and its C++ engine, so the two are one runtime, and its decoder is laddered the same way, with `--audio-depth N` running the N-layer rung of the same weights.
+
+```python
+import needle
+
+print(needle.transcribe("clip.wav")["text"])
+# turn off the kitchen lights
+```
+
+Every call returns the text, the language, the milliseconds to the first token and the decoder's tokens per second after it. `word_timestamps=True` adds each word with its start, end and probability, `keywords=[...]` favours the names and product words your users say, and `language="de"` forces the language instead of detecting it. `needle.Whistle()` is the same model as an object, for `embed(audio)` or to hold one tuned `.cact`. Silence and steady noise return an empty transcript rather than an invented sentence. `needle whistle playground` transcribes from the microphone, and `needle whistle compare` puts Whistle next to Whisper and Moonshine on the same clip.
+
+At 16.9 MB Whistle is 8.6x smaller than Whisper base and 6.6x quicker to the first token. It is ahead on LibriSpeech test-clean and test-other, on SPGISpeech, on Earnings-22 and on the FLEURS average. Whisper base is ahead on TED-LIUM, on AMI and on the MLS average.
+
+![Whistle against Whisper and Moonshine](assets/whistle-benchmarks.svg)
+
+Word error rate on the full test splits, scored with the Whisper normalizers. Whisper and Moonshine figures are the ones their authors published. Latency and decode are 10 s of audio on an Apple M4 Pro, at each engine's defaults. The per-benchmark caveats are on [Hugging Face](https://huggingface.co/Cactus-Compute/whistle).
+
+```sh
+needle --model needle3.cact --model whistle.cact --tools tools.json --audio clip.wav
+```
+
+One engine holds both models: `needle_load` reads whichever one a `.cact` carries, and `needle_complete` takes a clip wherever it takes text. It transcribes, answers the transcript against your tools, and returns one JSON object with the tool calls and the speech fields, the speech ones prefixed `audio_`. The transcription stays inside the engine, so audio in and tool calls out is one call.
+
+The benchmarks against Whisper and Moonshine, the architecture and the interactive demo are at [cactuscompute.com/whistle](https://cactuscompute.com/whistle); the weights and every platform engine are on [Hugging Face](https://huggingface.co/Cactus-Compute/whistle).
 
 ## Guides
 
@@ -103,7 +133,7 @@ Or hand the key to Claude Code or Codex with [cactuscompute.com/llms.txt](https:
 
 ## Deploy
 
-Every deployment target ships a prebuilt engine under 1 MB that loads the `needle3.cact` weights at start. `needle build --platform <folder> [--layers N]` fetches that engine and puts the weights beside it.
+Every deployment target ships a prebuilt engine that loads the `needle3.cact` weights at start. `needle build --platform <folder> [--layers N]` fetches that engine and puts the weights beside it.
 
 ![One engine per platform folder](assets/deploy.svg)
 

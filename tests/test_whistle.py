@@ -20,54 +20,72 @@ requires_whistle = pytest.mark.skipif(not (_engine_available("whistle") and os.p
                                       reason="Whistle engine or whistle.cact not installed (auto-fetched from HF on first real use)")
 
 
-def test_engine_and_weights_resolve_like_needle(tmp_path, monkeypatch):
-    import zipfile
+class _Stub:
+    class _Fn:
+        argtypes = None
+        restype = None
+
+    def __getattr__(self, name):
+        return _Stub._Fn()
+
+
+def test_speech_weights_come_from_their_own_repo(tmp_path, monkeypatch):
+    """One engine runs both models, so only the weights have a channel of their own."""
     import needle
-    from needle import whistle
+    from needle.agent import whistle
     from needle.agent import fetch
 
+    assert fetch.WHISTLE in fetch.WEIGHTS_ONLY and fetch.NAMED_ENGINES == ()
     monkeypatch.setattr(os.path, "expanduser", lambda path: str(tmp_path))
     monkeypatch.setattr(needle, "__file__", str(tmp_path / "package" / "__init__.py"))
     monkeypatch.setattr(fetch, "_register_download", lambda generation: None)
     monkeypatch.delenv("NEEDLE_WHISTLE_WEIGHTS", raising=False)
-    monkeypatch.setenv("NEEDLE_WHISTLE_LIB_PATH", "/opt/libwhistle.so")
-    assert needle._library_path(fetch.WHISTLE) == "/opt/libwhistle.so"
-    monkeypatch.delenv("NEEDLE_WHISTLE_LIB_PATH")
 
-    lib = fetch.lib_name(fetch.WHISTLE)
-    wheel, weights, fetched = tmp_path / "engine.whl", tmp_path / "published.cact", []
-    with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("needle/" + lib, b"engine")
+    weights, fetched = tmp_path / "published.cact", []
     weights.write_bytes(b"weights")
     monkeypatch.setattr("huggingface_hub.hf_hub_download",
-                        lambda **kwargs: fetched.append((kwargs["repo_id"], kwargs["filename"])) or str(weights if kwargs["filename"].endswith(".cact") else wheel))
+                        lambda **kwargs: fetched.append((kwargs["repo_id"], kwargs["filename"])) or str(weights))
     cache = tmp_path / ".cache" / "cactus-needle" / "whistle" / fetch.ENGINE_VERSIONS[fetch.WHISTLE]
-    assert lib.startswith("libwhistle.") and needle._library_path(fetch.WHISTLE) == str(cache / lib) and (cache / lib).read_bytes() == b"engine"
-    assert whistle._weights_path() == str(cache / "whistle.cact") and (cache / "whistle.cact").read_bytes() == b"weights"
-    assert fetched == [("Cactus-Compute/whistle", f"python/cactus_whistle-{fetch.ENGINE_VERSIONS[fetch.WHISTLE]}-py3-none-{fetch._platform_tag()}.whl"),
-                       ("Cactus-Compute/whistle", "whistle.cact")]
-    assert needle._library_path(fetch.WHISTLE) and whistle._weights_path() and len(fetched) == 2
+    assert whistle._weights_path() == str(cache / "whistle.cact")
+    assert (cache / "whistle.cact").read_bytes() == b"weights"
+    assert fetched == [("Cactus-Compute/whistle", "whistle.cact")]
     monkeypatch.setenv("NEEDLE_WHISTLE_WEIGHTS", "/opt/whistle.cact")
     assert whistle._weights_path() == "/opt/whistle.cact"
 
 
-def test_cli_fetches_the_whistle_engine_and_weights(tmp_path, monkeypatch, capsys):
-    import sys
-    import needle._telemetry
-    import needle.cli
-    from needle.agent import fetch
+def test_module_level_transcribe_reuses_one_model(monkeypatch):
+    import needle
+    from needle.agent import whistle
 
     calls = []
-    monkeypatch.setattr(needle._telemetry, "track", lambda *a, **k: None)
-    monkeypatch.setattr(fetch, "fetch_library", lambda version, dest, tag=None, generation=2: calls.append((version, tag, generation)) or os.path.join(dest, "libwhistle.so"))
-    monkeypatch.setattr(fetch, "fetch_weights", lambda generation, dest: calls.append((generation, dest)) or __file__)
-    monkeypatch.setattr(sys, "argv", ["needle", "whistle", "fetch", "--out", str(tmp_path), "--platform-tag", "manylinux2014_aarch64"])
-    needle.cli.main()
-    monkeypatch.setattr(sys, "argv", ["needle", "whistle", "download", "whistle", "--out", str(tmp_path)])
-    needle.cli.main()
-    assert calls == [(fetch.ENGINE_VERSIONS[fetch.WHISTLE], "manylinux2014_aarch64", fetch.WHISTLE), (fetch.WHISTLE, str(tmp_path))]
-    out = capsys.readouterr().out
-    assert "NEEDLE_WHISTLE_LIB_PATH" in out and "needle.Whistle(weights=" in out
+
+    class _Fake:
+        def __init__(self, weights=None):
+            calls.append(weights)
+            self.weights = weights
+
+        def transcribe(self, audio, language=None, keywords=None, word_timestamps=False):
+            return {"text": audio, "language": language, "words": word_timestamps}
+
+    monkeypatch.setattr(whistle, "Whistle", _Fake)
+    monkeypatch.setattr(whistle, "_shared", {})
+    monkeypatch.setattr("needle._telemetry.track", lambda *a, **k: None)
+    assert needle.transcribe("a.wav")["text"] == "a.wav"
+    assert needle.transcribe("b.wav", language="de")["language"] == "de"
+    assert calls == [None]
+    needle.transcribe("c.wav", weights="tuned.cact")
+    assert calls == [None, "tuned.cact"]
+
+
+def test_the_speech_model_loads_into_needle_s_engine(monkeypatch):
+    from needle.agent import whistle
+
+    loaded = []
+    monkeypatch.setattr(whistle, "_handle", None)
+    monkeypatch.setattr("needle._load_cdll", lambda generation: loaded.append(generation) or _Stub())
+    whistle._lib()
+    monkeypatch.setattr(whistle, "_handle", None)
+    assert loaded == [3]
 
 
 def _tone(seconds, rate=16000):
@@ -88,7 +106,7 @@ def _write_wav(path, samples, rate, channels=1, width=2):
 
 @pytest.mark.parametrize("rate,channels,width", [(16000, 1, 2), (8000, 1, 2), (44100, 2, 2), (16000, 1, 1), (22050, 2, 3), (48000, 1, 4)])
 def test_wav_files_become_16k_mono_floats(tmp_path, rate, channels, width):
-    from needle.whistle import _read_wav
+    from needle.agent.whistle import _read_wav
 
     if rate != 16000:
         pytest.importorskip("soxr")
@@ -102,7 +120,7 @@ def test_wav_files_become_16k_mono_floats(tmp_path, rate, channels, width):
 
 
 def test_samples_accept_lists_arrays_and_float32_bytes():
-    from needle.whistle import _samples
+    from needle.agent.whistle import _samples
 
     values = [0.0, 0.5, -0.25]
     inputs = [values, array.array("f", values), struct.pack("<3f", *values), (v for v in values)]
@@ -125,7 +143,7 @@ def test_silence_is_an_empty_transcript():
 @requires_whistle
 def test_transcribe_returns_text_language_and_timed_words(tmp_path):
     from needle import Whistle
-    from needle.whistle import LANGUAGES
+    from needle.agent.whistle import LANGUAGES
 
     whistle = Whistle()
     sound = [v * (0.2 + 0.8 * abs(math.sin(math.pi * 3 * i / 16000))) for i, v in enumerate(_tone(3))]
@@ -204,7 +222,7 @@ class _Microphone:
 def test_record_resamples_the_microphone_to_16_khz_and_keeps_30_s(monkeypatch, capsys):
     numpy = pytest.importorskip("numpy")
     pytest.importorskip("soxr")
-    from needle.whistle.playground import record
+    from needle.agent.whistle import record
 
     microphone = _Microphone(48000, 1)
     monkeypatch.setitem(sys.modules, "sounddevice", microphone)
@@ -219,26 +237,26 @@ def test_record_resamples_the_microphone_to_16_khz_and_keeps_30_s(monkeypatch, c
 
 
 def test_record_says_what_is_missing(monkeypatch):
-    from needle.whistle.playground import record
+    from needle.agent.whistle import record
 
     monkeypatch.setitem(sys.modules, "sounddevice", None)
-    with pytest.raises(RuntimeError, match=r"cactus-needle\[whistle\]"):
+    with pytest.raises(RuntimeError, match=r"cactus-needle\[mic\]"):
         record()
 
 
 def test_rate_counts_steps_after_the_first_mark():
-    from needle.whistle.compare import rate
+    from needle.agent.whistle import rate
 
     assert rate([1.0, 1.5, 2.0]) == 2.0
     assert rate([1.0]) == 0.0 and rate([]) == 0.0 and rate([2.0, 2.0]) == 0.0
 
 
 def test_compare_prints_one_line_per_model_with_dashes_for_missing_timing(capsys):
-    from needle.whistle.compare import compare
+    from needle.agent.whistle import run_models
 
     models = [("whistle", 17e6, lambda audio: ("hello there", 0.013, 1264.0)),
               ("moonshine tiny v2", 45e6, lambda audio: ("", None, None))]
-    compare(models, [0.0] * 16000)
+    run_models(models, [0.0] * 16000)
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
     assert lines[0].startswith("  whistle             17 MB  ttft  13 ms  decode 1264 tok/s  total")
@@ -248,21 +266,21 @@ def test_compare_prints_one_line_per_model_with_dashes_for_missing_timing(capsys
 
 
 def test_playground_and_compare_share_one_status_line():
-    from needle.whistle.playground import status
+    from needle.agent.whistle import status
 
     assert status("whistle", 17e6, 0.0137, 1264.4, 0.048) == "  whistle             17 MB  ttft  14 ms  decode 1264 tok/s  total   48 ms"
     assert status("moonshine tiny v2", 145e6, None, None, 0.21) == "  moonshine tiny v2  145 MB  ttft      -  decode          -  total  210 ms"
 
 
 def test_status_reads_a_slow_run_in_seconds():
-    from needle.whistle.playground import status
+    from needle.agent.whistle import status
 
     assert status("whistle", 17e6, 0.0137, 1264.4, 12.5).endswith("total  12.5 s")
     assert status("whistle", 17e6, 0.0137, 1264.4, 9.9).endswith("total 9900 ms")
 
 
 def test_audio_path_takes_a_path_as_a_terminal_hands_it_over():
-    from needle.whistle.playground import audio_path
+    from needle.agent.whistle import audio_path
 
     assert audio_path(" clip.wav ") == "clip.wav"
     assert audio_path('"my clips/a b.wav"') == "my clips/a b.wav"
@@ -271,11 +289,11 @@ def test_audio_path_takes_a_path_as_a_terminal_hands_it_over():
 
 
 def test_playground_prints_text_words_and_timing(capsys):
-    from needle.whistle.playground import transcribe
+    from needle.agent.whistle import show_transcript
 
     whistle = _Whistle({"text": "hello there", "language": "en", "ttft_ms": 12.6, "decode_tps": 900.4,
                         "words": [{"word": "hello", "start": 0.1, "end": 0.4, "probability": 0.98}]})
-    transcribe(whistle, "clip.wav", {"language": "en", "keywords": ["Siobhan"], "timestamps": True})
+    show_transcript(whistle, "clip.wav", {"language": "en", "keywords": ["Siobhan"], "timestamps": True})
     out = capsys.readouterr().out.splitlines()
     assert whistle.calls == [("clip.wav", {"language": "en", "keywords": ["Siobhan"], "word_timestamps": True})]
     assert out[0] == "hello there"
@@ -284,62 +302,61 @@ def test_playground_prints_text_words_and_timing(capsys):
 
 
 def test_playground_reports_engine_errors_instead_of_raising(capsys):
-    from needle.whistle.playground import transcribe
+    from needle.agent.whistle import show_transcript
 
     class Broken:
         def transcribe(self, audio, **options):
             raise RuntimeError("audio limit is 30 s")
 
-    transcribe(Broken(), "long.wav", {"language": None, "keywords": [], "timestamps": False})
+    show_transcript(Broken(), "long.wav", {"language": None, "keywords": [], "timestamps": False})
     assert capsys.readouterr().out == "  audio limit is 30 s\n"
 
 
 def test_playground_keeps_the_language_when_the_code_is_not_one_of_ours(monkeypatch, capsys):
-    from needle.whistle import playground
+    from needle.agent import whistle
 
     lines = iter(["/language de", "/language EN", "/language", "/quit"])
-    monkeypatch.setattr(playground, "prompt", lambda: next(lines))
-    monkeypatch.setattr("needle.whistle.Whistle", lambda weights=None: _Whistle({}))
-    playground.main(type("Args", (), {"audio": None, "language": None, "keywords": "",
-                                      "word_timestamps": False, "weights": None})())
+    monkeypatch.setattr(whistle, "prompt", lambda: next(lines))
+    monkeypatch.setattr("needle.agent.whistle.Whistle", lambda weights=None: _Whistle({}))
+    whistle.playground(type("Args", (), {"audio": None, "language": None, "keywords": "",
+                                         "word_timestamps": False, "weights": None})())
     out = capsys.readouterr().out
     assert "language de" in out and "language is one of en de fr es it nl pl" in out and "language detected" in out
 
 
 def test_compare_runs_a_file_the_same_way_the_playground_does(monkeypatch, capsys):
     pytest.importorskip("numpy")
-    from needle.whistle import compare as whistle_compare
+    from needle.agent import whistle
 
     seen, read = [], []
-    monkeypatch.setattr(whistle_compare, "compare", lambda models, audio: seen.append(len(audio)))
-    monkeypatch.setattr("needle.whistle._read_wav", lambda path: read.append(path) or [0.0] * 16000)
+    monkeypatch.setattr(whistle, "run_models", lambda models, audio: seen.append(len(audio)))
+    monkeypatch.setattr("needle.agent.whistle._read_wav", lambda path: read.append(path) or [0.0] * 16000)
     lines = iter(['/file "my clips/a b.wav"', "/quit"])
-    monkeypatch.setattr(whistle_compare, "prompt", lambda: next(lines))
-    monkeypatch.setattr(whistle_compare, "load_whistle", lambda weights: (17e6, lambda audio: ("", None, None)))
-    monkeypatch.setattr(whistle_compare, "load_whisper", lambda size: (76e6, lambda audio: ("", None, None)))
-    monkeypatch.setattr(whistle_compare, "load_moonshine", lambda: (45e6, lambda audio: ("", None, None)))
-    whistle_compare.main(type("Args", (), {"audio": None, "weights": None})())
+    monkeypatch.setattr(whistle, "prompt", lambda: next(lines))
+    monkeypatch.setattr(whistle, "load_whistle", lambda weights: (17e6, lambda audio: ("", None, None)))
+    monkeypatch.setattr(whistle, "load_whisper", lambda size: (76e6, lambda audio: ("", None, None)))
+    monkeypatch.setattr(whistle, "load_moonshine", lambda: (45e6, lambda audio: ("", None, None)))
+    whistle.compare(type("Args", (), {"audio": None, "weights": None})())
     assert read == ["my clips/a b.wav"] and seen == [16000]
 
 
 def test_compare_needs_its_extra(monkeypatch):
-    from needle.whistle import compare as whistle_compare
+    from needle.agent import whistle
 
     monkeypatch.setitem(sys.modules, "whisper", None)
-    with pytest.raises(SystemExit, match=r"cactus-needle\[whistle,whistle-compare\]"):
-        whistle_compare.main(type("Args", (), {"audio": None, "weights": None})())
+    with pytest.raises(SystemExit, match=r"cactus-needle\[mic,compare\]"):
+        whistle.compare(type("Args", (), {"audio": None, "weights": None})())
 
 
 def test_cli_routes_the_whistle_commands(monkeypatch):
     import needle._telemetry
     import needle.cli
-    import needle.whistle.playground
-    import needle.whistle.compare
+    import needle.agent.whistle
 
     seen = []
     monkeypatch.setattr(needle._telemetry, "track", lambda *a, **k: None)
-    monkeypatch.setattr(needle.whistle.playground, "main", lambda args: seen.append(("playground", args)))
-    monkeypatch.setattr(needle.whistle.compare, "main", lambda args: seen.append(("compare", args)))
+    monkeypatch.setattr(needle.agent.whistle, "playground", lambda args: seen.append(("playground", args)))
+    monkeypatch.setattr(needle.agent.whistle, "compare", lambda args: seen.append(("compare", args)))
     monkeypatch.setattr(sys, "argv", ["needle", "whistle", "playground", "clip.wav", "--language", "de", "--keywords", "Siobhan, Krzysztof", "--word-timestamps"])
     needle.cli.main()
     monkeypatch.setattr(sys, "argv", ["needle", "whistle", "compare", "--weights", "w.cact"])
@@ -348,35 +365,5 @@ def test_cli_routes_the_whistle_commands(monkeypatch):
     assert (seen[0][1].audio, seen[0][1].language, seen[0][1].keywords, seen[0][1].word_timestamps) == ("clip.wav", "de", "Siobhan, Krzysztof", True)
     assert (seen[1][1].audio, seen[1][1].weights) == (None, "w.cact")
     monkeypatch.setattr(sys, "argv", ["needle", "whistle"])
-    with pytest.raises(SystemExit, match="needle whistle playground \\| compare \\| fetch \\| download"):
+    with pytest.raises(SystemExit, match="needle whistle playground \\| compare"):
         needle.cli.main()
-
-
-def test_needle3_whistle_resolves_inside_the_needle3_repo(tmp_path, monkeypatch):
-    """The combined engine shares needle3's repo, so every path it fetches is prefixed."""
-    import zipfile
-    import needle
-    from needle.agent import fetch
-
-    audio = fetch.NEEDLE3_WHISTLE
-    assert fetch.engine_repo(audio) == fetch.engine_repo(3)
-    assert fetch.engine_version(audio) == "3.0.0"
-    assert fetch.lib_name(audio) == fetch.lib_name(3).replace("needle", audio)
-    assert fetch.engine_wheel("3.0.0", "win_arm64", audio).startswith(audio + "/python/")
-    assert fetch.engine_wheel("3.0.3", "win_arm64", 3).startswith("python/")
-
-    monkeypatch.setattr(os.path, "expanduser", lambda path: str(tmp_path))
-    monkeypatch.setattr(needle, "__file__", str(tmp_path / "package" / "__init__.py"))
-    monkeypatch.setattr(fetch, "_register_download", lambda generation: None)
-    monkeypatch.setenv(fetch.lib_path_env(audio), "/opt/libneedle3_whistle.so")
-    assert needle._library_path(audio) == "/opt/libneedle3_whistle.so"
-    monkeypatch.delenv(fetch.lib_path_env(audio))
-
-    wheel, fetched = tmp_path / "engine.whl", []
-    with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("needle/" + fetch.lib_name(audio), b"engine")
-    monkeypatch.setattr("huggingface_hub.hf_hub_download",
-                        lambda **kwargs: fetched.append(kwargs["filename"]) or str(wheel))
-    resolved = needle._library_path(audio)
-    assert resolved == str(tmp_path / ".cache" / "cactus-needle" / audio / "3.0.0" / fetch.lib_name(audio))
-    assert fetched == [fetch.engine_wheel("3.0.0", fetch._platform_tag(), audio)]

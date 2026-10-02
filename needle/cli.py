@@ -14,7 +14,7 @@ HELP = """usage: needle <command> [options]
   download       needle3 | needle3.safetensors | <platform> | model-<id> | <org>/<repo>[/<file>.cact]
   fetch          fetch the engine library for this platform
   playground     serve the browser playground
-  whistle        speech to text: playground | compare | fetch | download
+  whistle        speech to text: playground | compare
 
 needle <command> --help for the options of one command.
 Check the readme for the rest."""
@@ -265,7 +265,7 @@ def main():
     p.add_argument("--port", type=int, default=7860)
     p.add_argument("--host", type=str, default="127.0.0.1")
 
-    from .whistle import LANGUAGES
+    from .agent.whistle import LANGUAGES
     p = sub.add_parser("whistle")
     verbs = p.add_subparsers(dest="verb")
     v = verbs.add_parser("playground")
@@ -284,14 +284,6 @@ def main():
                    help="A WAV file to run through every model once (default: press Enter to speak)")
     v.add_argument("--weights", type=str, default=None,
                    help="whistle.cact to load (default: the published weights)")
-    v = verbs.add_parser("fetch")
-    v.add_argument("--out", type=str, default=None,
-                   help="Directory to place the engine (default: the cache)")
-    v.add_argument("--platform-tag", type=str, default=None,
-                   help="Fetch the build for another device, e.g. manylinux2014_aarch64")
-    v = verbs.add_parser("download")
-    v.add_argument("spec", type=str, help="whistle (the weights) or a platform folder (e.g. macos-arm64)")
-    v.add_argument("--out", type=str, default=".", help="Directory to place the files")
 
     args = parser.parse_args()
 
@@ -302,9 +294,6 @@ def main():
     from ._telemetry import track
     track("cli:" + args.command,
           {"generation": getattr(args, "generation", 2)})
-
-    if args.command == "whistle" and args.verb in ("fetch", "download"):
-        args.command, args.generation = args.verb, "whistle"
 
     if args.command == "run":
         from .model.run import main as run_main
@@ -341,7 +330,7 @@ def main():
             path = fetch.fetch_weights(target, args.out)
             print(f"  {'weights':<9} {path}  {os.path.getsize(path) / 1e6:.2f} MB")
             if target == fetch.WHISTLE:
-                print(f"  {'next':<9} needle.Whistle(weights={path!r})")
+                print(f"  {'next':<9} needle.transcribe('clip.wav', weights={path!r})")
             else:
                 print(f"  {'next':<9} needle.Needle(weights={path!r}, tools=[...])")
         elif kind == "hosted":
@@ -389,9 +378,9 @@ def main():
         playground_main(args)
     elif args.command == "whistle":
         if args.verb == "playground":
-            from .whistle.playground import main as whistle_main
+            from .agent.whistle import playground as whistle_main
         elif args.verb == "compare":
-            from .whistle.compare import main as whistle_main
+            from .agent.whistle import compare as whistle_main
         else:
-            raise SystemExit("needle whistle playground | compare | fetch | download")
+            raise SystemExit("needle whistle playground | compare")
         whistle_main(args)

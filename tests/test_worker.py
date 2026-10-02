@@ -45,8 +45,10 @@ int needle_init(const char* system, const char* tools, const char* index) {
     return 7;
 }
 
-int needle_complete(const char* input, int max_new_tokens, char* output,
-                    int capacity) {
+int needle_complete(const char* input, const float* pcm, int samples,
+                    int max_new_tokens, char* output, int capacity) {
+    (void)pcm;
+    (void)samples;
     (void)max_new_tokens;
     snprintf(output, (size_t)capacity,
              "{\"type\":\"text\",\"model\":%d,\"resets\":%d,"

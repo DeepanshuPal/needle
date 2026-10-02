@@ -11,11 +11,11 @@ import warnings
 from .agent.tools import Field, build_schema, pydantic_schema, tool, _is_pydantic_model
 from ._telemetry import track as _track
 from ._worker import FineTuneWorker
-from .whistle import Whistle
+from .agent.whistle import Whistle, transcribe
 
-__version__ = "3.0.1"
+__version__ = "3.1.0"
 __all__ = ["Needle", "Whistle", "ExtractionValidationError", "tool", "Field", "extract",
-           "__version__"]
+           "transcribe", "__version__"]
 
 
 class ExtractionValidationError(ValueError):
@@ -168,11 +168,13 @@ def _lib(generation=2):
         lib.needle_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
         lib.needle_init.restype = ctypes.c_int
         lib.needle_complete.argtypes = [
-            ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+            ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+            ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
         lib.needle_complete.restype = ctypes.c_int
         if generation >= 3:
             lib.needle_embed.argtypes = [
-                ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
+                ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+                ctypes.POINTER(ctypes.c_float), ctypes.c_int]
             lib.needle_embed.restype = ctypes.c_int
         lib.needle_reset.argtypes = []
         lib.needle_reset.restype = None
@@ -286,7 +288,7 @@ class Needle:
         else:
             lib = _lib(self._generation)
             rc = lib.needle_complete(
-                text.encode("utf-8"), int(max_new_tokens), self._buffer,
+                text.encode("utf-8"), None, 0, int(max_new_tokens), self._buffer,
                 len(self._buffer))
             if rc < 0:
                 detail = self._buffer.value.decode("utf-8", "replace")
@@ -312,11 +314,11 @@ class Needle:
         if self._worker is not None:
             return self._worker.embed(text)
         lib = _lib(self._generation)
-        dim = lib.needle_embed(text.encode("utf-8"), None, 0)
+        dim = lib.needle_embed(text.encode("utf-8"), None, 0, None, 0)
         if dim <= 0:
             raise RuntimeError(f"needle_embed failed (code {dim})")
         output = (ctypes.c_float * dim)()
-        rc = lib.needle_embed(text.encode("utf-8"), output, dim)
+        rc = lib.needle_embed(text.encode("utf-8"), None, 0, output, dim)
         if rc != dim:
             raise RuntimeError(f"needle_embed failed (code {rc})")
         return list(output)

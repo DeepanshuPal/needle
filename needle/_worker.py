@@ -52,7 +52,8 @@ def _load_library(path, generation=2):
     lib.needle_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p,
                                 ctypes.c_char_p]
     lib.needle_init.restype = ctypes.c_int
-    lib.needle_complete.argtypes = [ctypes.c_char_p, ctypes.c_int,
+    lib.needle_complete.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float),
+                                    ctypes.c_int, ctypes.c_int,
                                     ctypes.c_char_p, ctypes.c_int]
     lib.needle_complete.restype = ctypes.c_int
     if int(generation) >= 3:
@@ -96,7 +97,7 @@ def _child():
             operation = request.get("operation")
             if operation == "complete":
                 code = lib.needle_complete(
-                    request["text"].encode("utf-8"),
+                    request["text"].encode("utf-8"), None, 0,
                     int(request["max_new_tokens"]), output, len(output))
                 if code < 0:
                     _write_message(protocol, {

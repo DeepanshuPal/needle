@@ -110,7 +110,8 @@ def test_unpublished_engine_wheels_lists_every_missing_tag(monkeypatch):
 
     published = {}
     for generation, version in fetch.ENGINE_VERSIONS.items():
-        # needle3 hosts both its own engine and needle3_whistle, so the sets merge.
+        if generation in fetch.WEIGHTS_ONLY:
+            continue
         published.setdefault(fetch.ENGINE_REPOS[generation], set()).update(
             fetch.engine_wheel(version, tag, generation) for tag in fetch.WHEEL_TAGS)
     monkeypatch.setattr("huggingface_hub.list_repo_files",
@@ -122,16 +123,8 @@ def test_unpublished_engine_wheels_lists_every_missing_tag(monkeypatch):
     published[repo3].remove(dropped)
     assert fetch.unpublished_engine_wheels() == [repo3 + "/" + dropped]
 
-    audio = fetch.engine_wheel(fetch.ENGINE_VERSIONS[fetch.NEEDLE3_WHISTLE], "win_arm64", fetch.NEEDLE3_WHISTLE)
-    published[repo3].remove(audio)
-    assert fetch.unpublished_engine_wheels() == [repo3 + "/" + dropped, repo3 + "/" + audio]
-    published[repo3].add(audio)
-
-    whistle = fetch.ENGINE_REPOS[fetch.WHISTLE]
-    published[whistle].clear()
-    missing = fetch.unpublished_engine_wheels()
-    assert len(missing) == 1 + len(fetch.WHEEL_TAGS)
-    assert missing[-1] == f"{whistle}/python/cactus_whistle-{fetch.ENGINE_VERSIONS[fetch.WHISTLE]}-py3-none-win_arm64.whl"
+    assert fetch.WHISTLE in fetch.WEIGHTS_ONLY
+    assert not any(fetch.ENGINE_REPOS[fetch.WHISTLE] in path for path in fetch.unpublished_engine_wheels())
 
 
 def test_a_repo_that_cannot_be_listed_holds_none_of_its_wheels(monkeypatch):
@@ -143,7 +136,8 @@ def test_a_repo_that_cannot_be_listed_holds_none_of_its_wheels(monkeypatch):
 
     monkeypatch.setattr("huggingface_hub.list_repo_files", refuse)
     missing = fetch.unpublished_engine_wheels()
-    assert len(missing) == len(fetch.ENGINE_VERSIONS) * len(fetch.WHEEL_TAGS)
+    engines = len(fetch.ENGINE_VERSIONS) - len(fetch.WEIGHTS_ONLY)
+    assert len(missing) == engines * len(fetch.WHEEL_TAGS)
 
 
 def test_release_gate_runs_before_the_publish_step():

@@ -5,33 +5,27 @@ import sys
 import zipfile
 
 WHISTLE = "whistle"
-NEEDLE3_WHISTLE = "needle3_whistle"
 
 ENGINE_REPOS = {
     2: "Cactus-Compute/needle2",
     3: "Cactus-Compute/needle3",
-    NEEDLE3_WHISTLE: "Cactus-Compute/needle3",
     WHISTLE: "Cactus-Compute/whistle",
 }
 ENGINE_VERSIONS = {
     2: "2.0.4",
-    3: "3.0.3",
-    NEEDLE3_WHISTLE: "3.0.0",
-    WHISTLE: "1.0.0",
+    3: "3.1.0",
+    WHISTLE: "2.0.0",
 }
 
 BASE_WEIGHTS = {
     2: "needle2.cact",
     3: "needle3.cact",
-    NEEDLE3_WHISTLE: "needle3.cact",
     WHISTLE: "whistle.cact",
 }
-# Engines named instead of numbered: one library per name, beside the generations.
-LIB_PATH_ENVS = {
-    NEEDLE3_WHISTLE: "NEEDLE3_WHISTLE_LIB_PATH",
-    WHISTLE: "NEEDLE_WHISTLE_LIB_PATH",
-}
-NAMED_ENGINES = tuple(LIB_PATH_ENVS)
+# Weights published on their own, with no engine of their own: one engine runs them all.
+WEIGHTS_ONLY = (WHISTLE,)
+LIB_PATH_ENVS = {}
+NAMED_ENGINES = ()
 CHECKPOINT_PREFIX = "checkpoints"
 
 # Backwards-compatible aliases for callers that explicitly fetch Needle 2.
@@ -145,6 +139,8 @@ def unpublished_engine_wheels():
 
     missing, listings = [], {}
     for generation in ENGINE_VERSIONS:
+        if generation in WEIGHTS_ONLY:
+            continue
         repo = ENGINE_REPOS[generation]
         if repo not in listings:
             # A repo that is private or not created yet holds none of its wheels.
@@ -216,12 +212,12 @@ def base_weights(generation=2):
 
 
 def repo_prefix(generation=2):
-    """Where an engine lives inside its repo. needle3_whistle shares needle3's."""
-    return generation + "/" if generation == NEEDLE3_WHISTLE else ""
+    """Where an engine lives inside its repo."""
+    return ""
 
 
 def cache_dir(generation=2):
-    folder = generation if generation in NAMED_ENGINES else f"v{int(generation)}"
+    folder = generation if generation in NAMED_ENGINES + WEIGHTS_ONLY else f"v{int(generation)}"
     return os.path.join(os.path.expanduser("~"), ".cache", "cactus-needle",
                         folder, engine_version(generation))
 
