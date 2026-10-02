@@ -329,8 +329,6 @@ def test_compare_runs_a_file_the_same_way_the_playground_does(monkeypatch, capsy
     import types
     from needle.agent import whistle
 
-    # compare() guards on importing the baselines before it loads anything. Every
-    # loader below is stubbed, so the guard only needs the names to resolve.
     for name in ("whisper", "moonshine_voice"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     seen, read = [], []
