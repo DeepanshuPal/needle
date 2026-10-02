@@ -326,8 +326,13 @@ def test_playground_keeps_the_language_when_the_code_is_not_one_of_ours(monkeypa
 
 def test_compare_runs_a_file_the_same_way_the_playground_does(monkeypatch, capsys):
     pytest.importorskip("numpy")
+    import types
     from needle.agent import whistle
 
+    # compare() guards on importing the baselines before it loads anything. Every
+    # loader below is stubbed, so the guard only needs the names to resolve.
+    for name in ("whisper", "moonshine_voice"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     seen, read = [], []
     monkeypatch.setattr(whistle, "run_models", lambda models, audio: seen.append(len(audio)))
     monkeypatch.setattr("needle.agent.whistle._read_wav", lambda path: read.append(path) or [0.0] * 16000)
